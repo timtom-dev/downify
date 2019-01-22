@@ -1,0 +1,15 @@
+[package]
+name = "downify"
+version = "0.1.0"
+authors = ["TimTom <timtom.business@gmail.com>"]
+edition = "2018"
+description = "Downify is a small Rust library for downloading, signing, and verifying files."
+documentation = "https://github.com/timtom-dev/downify"
+homepage = "https://github.com/timtom-dev/downify"
+repository = "https://github.com/timtom-dev/downify"
+readme = "README.md"
+keywords = ["cryptography"]
+categories = ["cryptography"]
+license = "MIT"
+
+[dependencies]
