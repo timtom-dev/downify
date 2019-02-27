@@ -10,3 +10,21 @@ Sodiumoxide's keys and signatures are encoded with base64's URL_SAFE_NO_PAD for 
  - Signatures are prepended with "DYG1"
 
 A command-line interface to the library, with options based on OpenBSD's Signify, is included.
+
+### Examples
+
+```
+extern crate downify;
+
+// Generate a keypair
+let (public_key, secret_key) = downify::gen_keypair();
+
+// Sign a file
+let signature = downify::sign("/source/path", &secret_key);
+
+// Verify a local file
+let file_handle = downify::verify_open("/source/path", &signature, &public_key).unwrap();
+
+// Verify a remote file
+let file_handle = verify_get("https://www.example.com/", "/destination/path", &signature, &public_key).unwrap();
+```
