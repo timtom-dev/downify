@@ -1,16 +1,16 @@
-extern crate reqwest;
 extern crate base64;
+extern crate reqwest;
 
-use std::str::FromStr;
+use std::error::Error;
 use std::fs;
 use std::fs::File;
 use std::io::prelude::*;
 use std::io::SeekFrom;
-use std::error::Error;
+use std::str::FromStr;
 
-use reqwest::header::{CONTENT_LENGTH, RANGE};
 use base64::URL_SAFE_NO_PAD;
 use blake2_rfc::blake2b::Blake2b;
+use reqwest::header::{CONTENT_LENGTH, RANGE};
 use sodiumoxide::crypto::sign::ed25519;
 use sodiumoxide::crypto::sign::ed25519::verify_detached;
 
@@ -36,12 +36,13 @@ pub struct Context<'a> {
 }
 
 impl<'a> Context<'a> {
-    pub fn new(source_url: &'a str,
-               dest_path: &'a str,
-               expected_sig: &'a str,
-               public_key: &'a str,
-               chunksize: usize) -> Result<Self, Box<Error>> {
-
+    pub fn new(
+        source_url: &'a str,
+        dest_path: &'a str,
+        expected_sig: &'a str,
+        public_key: &'a str,
+        chunksize: usize,
+    ) -> Result<Self, Box<Error>> {
         let public_key = decode_public_key(public_key).unwrap();
         let expected_sig = decode_signature(expected_sig).unwrap();
 
@@ -54,7 +55,8 @@ impl<'a> Context<'a> {
             .headers()
             .get(CONTENT_LENGTH)
             .ok_or("Response doesn't include Content-Length")?;
-        let length = usize::from_str(length.to_str()?).map_err(|_| "invalid Content-Length header")?;
+        let length =
+            usize::from_str(length.to_str()?).map_err(|_| "invalid Content-Length header")?;
 
         Ok(Context {
             source_url: source_url,
@@ -74,9 +76,17 @@ impl<'a> Context<'a> {
     /// Download next chunk and update hash
     pub fn step(&mut self) -> Result<Progress, Box<Error>> {
         // Download chunk
-        let mut response = self.client
+        let mut response = self
+            .client
             .get(self.source_url)
-            .header(RANGE, format!("bytes={}-{}", self.completed_bytes, self.completed_bytes + self.chunksize - 1))
+            .header(
+                RANGE,
+                format!(
+                    "bytes={}-{}",
+                    self.completed_bytes,
+                    self.completed_bytes + self.chunksize - 1
+                ),
+            )
             .send()?;
 
         self.buffer.clear();
@@ -87,11 +97,14 @@ impl<'a> Context<'a> {
 
         // Write chunk to disk
         let bytes_written = self.dest_file.write(&self.buffer)?;
-        
+
         // Update context
         self.completed_bytes += bytes_written;
 
-        Ok(Progress { completed_bytes: self.completed_bytes, total_bytes: self.content_length })
+        Ok(Progress {
+            completed_bytes: self.completed_bytes,
+            total_bytes: self.content_length,
+        })
     }
 
     /// Consume context, verify hash, and return `VerifiedFile` handle
@@ -117,8 +130,10 @@ pub fn gen_keypair() -> (String, String) {
     sodiumoxide::init().unwrap();
     let (pk, sk) = ed25519::gen_keypair();
 
-    (format!("DYP1{}", base64::encode_config(&pk[..], URL_SAFE_NO_PAD)),
-     format!("DYS1{}", base64::encode_config(&sk[..], URL_SAFE_NO_PAD)))
+    (
+        format!("DYP1{}", base64::encode_config(&pk[..], URL_SAFE_NO_PAD)),
+        format!("DYS1{}", base64::encode_config(&sk[..], URL_SAFE_NO_PAD)),
+    )
 }
 
 /// Sign a file with a secret key
@@ -137,7 +152,10 @@ pub fn sign(file_path: &str, secret_key: &str) -> String {
 
     // Sign hash
     let signature = ed25519::sign_detached(&hash, &secret_key);
-    format!("DYG1{}", base64::encode_config(&signature[..], URL_SAFE_NO_PAD))
+    format!(
+        "DYG1{}",
+        base64::encode_config(&signature[..], URL_SAFE_NO_PAD)
+    )
 }
 
 /// Open file and verify before returning a file handle
@@ -166,7 +184,12 @@ pub fn verify_open(file_path: &str, expected_sig: &str, public_key: &str) -> Opt
 }
 
 /// Download file to buffer and verify before writing to destination
-pub fn verify_get(source_url: &str, dest_path: &str, expected_sig: &str, public_key: &str) -> Option<VerifiedFile> {
+pub fn verify_get(
+    source_url: &str,
+    dest_path: &str,
+    expected_sig: &str,
+    public_key: &str,
+) -> Option<VerifiedFile> {
     let public_key = decode_public_key(public_key).unwrap();
     let expected_sig = decode_signature(expected_sig).unwrap();
 
@@ -174,7 +197,7 @@ pub fn verify_get(source_url: &str, dest_path: &str, expected_sig: &str, public_
     let mut buffer = Vec::new();
     let mut resp = reqwest::get(source_url).unwrap();
     resp.read_to_end(&mut buffer).unwrap();
-    
+
     // Hash file
     let mut context = Blake2b::new(32);
     context.update(&buffer);
@@ -185,7 +208,7 @@ pub fn verify_get(source_url: &str, dest_path: &str, expected_sig: &str, public_
         // Write file once data is verified
         let mut dest_file = File::create(dest_path).unwrap();
         dest_file.seek(SeekFrom::Start(0)).unwrap();
-    
+
         Some(dest_file)
     } else {
         None
@@ -195,11 +218,12 @@ pub fn verify_get(source_url: &str, dest_path: &str, expected_sig: &str, public_
 fn decode_public_key(public_key: &str) -> Option<ed25519::PublicKey> {
     match &public_key[0..4] {
         "DYP1" => ed25519::PublicKey::from_slice(
-                match base64::decode_config(&public_key[4..], URL_SAFE_NO_PAD) {
-                    Ok(x) => x,
-                    Err(_) => return None,
-                }.as_slice(),
-            ),
+            match base64::decode_config(&public_key[4..], URL_SAFE_NO_PAD) {
+                Ok(x) => x,
+                Err(_) => return None,
+            }
+            .as_slice(),
+        ),
         _ => None,
     }
 }
@@ -207,11 +231,12 @@ fn decode_public_key(public_key: &str) -> Option<ed25519::PublicKey> {
 fn decode_secret_key(secret_key: &str) -> Option<ed25519::SecretKey> {
     match &secret_key[0..4] {
         "DYS1" => ed25519::SecretKey::from_slice(
-                match base64::decode_config(&secret_key[4..], URL_SAFE_NO_PAD) {
-                    Ok(x) => x,
-                    Err(_) => return None,
-                }.as_slice(),
-            ),
+            match base64::decode_config(&secret_key[4..], URL_SAFE_NO_PAD) {
+                Ok(x) => x,
+                Err(_) => return None,
+            }
+            .as_slice(),
+        ),
         _ => None,
     }
 }
@@ -219,11 +244,12 @@ fn decode_secret_key(secret_key: &str) -> Option<ed25519::SecretKey> {
 fn decode_signature(signature: &str) -> Option<ed25519::Signature> {
     match &signature[0..4] {
         "DYG1" => ed25519::Signature::from_slice(
-                match base64::decode_config(&signature[4..], URL_SAFE_NO_PAD) {
-                    Ok(x) => x,
-                    Err(_) => return None,
-                }.as_slice(),
-            ),
+            match base64::decode_config(&signature[4..], URL_SAFE_NO_PAD) {
+                Ok(x) => x,
+                Err(_) => return None,
+            }
+            .as_slice(),
+        ),
         _ => None,
     }
 }

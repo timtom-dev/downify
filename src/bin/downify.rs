@@ -2,10 +2,10 @@ extern crate downify;
 extern crate structopt;
 
 use std::fs;
-use std::io::Write;
 use std::io::stdout;
-use url::Url;
+use std::io::Write;
 use structopt::StructOpt;
+use url::Url;
 
 #[derive(Debug, StructOpt)]
 #[structopt(name = "Downify")]
@@ -51,10 +51,18 @@ fn main() {
     let opt = Opt::from_args();
 
     let mut selected_modes = 0;
-    if opt.generate { selected_modes += 1; }
-    if opt.sign     { selected_modes += 1; }
-    if opt.local    { selected_modes += 1; }
-    if opt.remote   { selected_modes += 1; }
+    if opt.generate {
+        selected_modes += 1;
+    }
+    if opt.sign {
+        selected_modes += 1;
+    }
+    if opt.local {
+        selected_modes += 1;
+    }
+    if opt.remote {
+        selected_modes += 1;
+    }
     if selected_modes != 1 {
         println!("Please use one of the -G, -S, -V, or -R flags.");
         return;
@@ -94,7 +102,7 @@ fn main() {
         } else {
             println!("Verification Failed");
         }
-        
+
     // Verify a remote file
     } else if opt.remote {
         if opt.url.is_none() {
@@ -108,11 +116,15 @@ fn main() {
         let parsed_url = Url::parse(&url_clone).expect("Invalid URL");
         let dest = parsed_url.path_segments().unwrap().last().unwrap();
 
-        let mut context = downify::Context::new(&url_clone, &dest, &signature, &public_key, 1024*1024).unwrap();
+        let mut context =
+            downify::Context::new(&url_clone, &dest, &signature, &public_key, 1024 * 1024).unwrap();
         loop {
             let progress = context.step().unwrap();
-            print!("\r{:?} / {:?} bytes", progress.completed_bytes, progress.total_bytes);
-            stdout().flush().ok().expect("Could not flush stdout");
+            print!(
+                "\r{:?} / {:?} bytes",
+                progress.completed_bytes, progress.total_bytes
+            );
+            stdout().flush().expect("Could not flush stdout");
             if progress.completed_bytes >= progress.total_bytes {
                 break;
             }
