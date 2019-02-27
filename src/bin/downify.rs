@@ -1,10 +1,8 @@
 extern crate downify;
-
-#[macro_use]
 extern crate structopt;
 
 use std::fs;
-use url::{Url, ParseError};
+use url::Url;
 use structopt::StructOpt;
 
 #[derive(Debug, StructOpt)]
@@ -33,10 +31,10 @@ struct Opt {
     /// The file containing the message to sign or verify.
     #[structopt(short)]
     message: Option<String>,
-    /// The URL to verify.
+    /// The URL of the message to verify.
     #[structopt(short)]
     url: Option<String>,
-    /// Public key produced by -G, and used by -V to check a signature.
+    /// Public key produced by -G, and used by -V and -R to check a signature.
     #[structopt(short, default_value = "publickey")]
     pubkey: String,
     /// Secret (private) key produced by -G, and used by -S to sign a message.
@@ -56,7 +54,7 @@ fn main() {
     if opt.local    { selected_modes += 1; }
     if opt.remote   { selected_modes += 1; }
     if selected_modes != 1 {
-        println!("Please use one of the -G, -S, or -V flags.");
+        println!("Please use one of the -G, -S, -V, or -R flags.");
         return;
     }
 
@@ -64,8 +62,8 @@ fn main() {
     if opt.generate {
         let (pk, sk) = downify::gen_keypair();
 
-        fs::write(opt.pubkey, pk).expect("Unable to write public key.");
-        fs::write(opt.seckey, sk).expect("Unable to write secret key.");
+        fs::write(opt.pubkey, pk).expect("Unable to write public key");
+        fs::write(opt.seckey, sk).expect("Unable to write secret key");
 
     // Sign a file
     } else if opt.sign {
@@ -74,9 +72,9 @@ fn main() {
             return;
         }
 
-        let secret_key = fs::read_to_string(opt.seckey).expect("Unable to read secret key.");
+        let secret_key = fs::read_to_string(opt.seckey).expect("Unable to read secret key");
         let signature = downify::sign(&opt.message.unwrap(), &secret_key);
-        fs::write(opt.sigfile, signature).expect("Unable to write signature.");
+        fs::write(opt.sigfile, signature).expect("Unable to write signature");
 
     // Verify a local file
     } else if opt.local {
@@ -85,8 +83,8 @@ fn main() {
             return;
         }
 
-        let signature = fs::read_to_string(opt.sigfile).expect("Unable to read signature.");
-        let public_key = fs::read_to_string(opt.pubkey).expect("Unable to read public key.");
+        let signature = fs::read_to_string(opt.sigfile).expect("Unable to read signature");
+        let public_key = fs::read_to_string(opt.pubkey).expect("Unable to read public key");
         let verified = downify::verify_open(&opt.message.unwrap(), &signature, &public_key);
 
         if verified.is_some() {
@@ -95,25 +93,32 @@ fn main() {
             println!("Verification Failed");
         }
         
-    // TODO Verify a remote file
+    // Verify a remote file
     } else if opt.remote {
         if opt.url.is_none() {
             println!("Please specify a URL to verify with the -u option.");
             return;
         }
 
-        let signature = fs::read_to_string(opt.sigfile).expect("Unable to read signature.");
-        let public_key = fs::read_to_string(opt.pubkey).expect("Unable to read public key.");
-        let url_clone = opt.url.clone();
-        let parsed_url = Url::parse(&url_clone.unwrap()).expect("Invalid URL");
+        let signature = fs::read_to_string(opt.sigfile).expect("Unable to read signature");
+        let public_key = fs::read_to_string(opt.pubkey).expect("Unable to read public key");
+        let url_clone = opt.url.clone().unwrap();
+        let parsed_url = Url::parse(&url_clone).expect("Invalid URL");
         let dest = parsed_url.path_segments().unwrap().last().unwrap();
-        let verified = downify::verify_get(&opt.url.unwrap(), &dest, &signature, &public_key);
+
+        let mut context = downify::Context::new(&url_clone, &dest, &signature, &public_key, 8*1024).unwrap();
+        loop {
+            let progress = context.step().unwrap();
+            if progress.completed_bytes >= progress.total_bytes {
+                break;
+            }
+        }
+        let verified = context.finish();
 
         if verified.is_some() {
             println!("Verification Success");
         } else {
             println!("Verification Failed");
-            // TODO delete file
         }
     }
 }

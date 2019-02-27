@@ -1,10 +1,14 @@
 extern crate reqwest;
 extern crate base64;
 
+use std::str::FromStr;
+use std::fs;
 use std::fs::File;
 use std::io::prelude::*;
 use std::io::SeekFrom;
+use std::error::Error;
 
+use reqwest::header::{CONTENT_LENGTH, RANGE};
 use base64::URL_SAFE_NO_PAD;
 use blake2_rfc::blake2b::Blake2b;
 use sodiumoxide::crypto::sign::ed25519;
@@ -13,115 +17,98 @@ use sodiumoxide::crypto::sign::ed25519::verify_detached;
 pub type VerifiedFile = File;
 
 pub struct Progress {
-    completed_bytes: usize,
-    total_bytes: Option<usize>,
-}
-
-pub struct Params {
-    resume: bool,
-    stream: bool,
-    forcehttps: bool,
-    chunksize: usize,
-}
-
-impl Params {
-    pub fn new() -> Self {
-        Params {
-            resume: false,
-            stream: true,
-            forcehttps: true,
-            chunksize: 8*1024,
-        }
-    }
-
-    pub fn resume(mut self, new_value: bool) -> Self {
-        self.resume = new_value;
-        self
-    }
-
-    pub fn forcehttps(mut self, new_value: bool) -> Self {
-        self.forcehttps = new_value;
-        self
-    }
-
-    pub fn chunksize(mut self, new_value: usize) -> Self {
-        self.chunksize = new_value;
-        self
-    }
+    pub completed_bytes: usize,
+    pub total_bytes: usize,
 }
 
 pub struct Context<'a> {
     source_url: &'a str,
+    dest_path: &'a str,
     dest_file: File,
     public_key: ed25519::PublicKey,
     expected_sig: ed25519::Signature,
-    params: Params,
+    hash_context: Blake2b,
+    client: reqwest::Client,
     completed_bytes: usize,
-    hash: Option<Vec<u8>>,
-    buffer: Vec<u8>,
+    content_length: usize,
+    chunksize: usize,
 }
 
 impl<'a> Context<'a> {
     pub fn new(source_url: &'a str,
                dest_path: &'a str,
-               public_key: &'a str,
                expected_sig: &'a str,
-               params: Params) -> Self {
+               public_key: &'a str,
+               chunksize: usize) -> Result<Self, Box<Error>> {
 
         let public_key = decode_public_key(public_key).unwrap();
         let expected_sig = decode_signature(expected_sig).unwrap();
 
-        // TODO use temp file based on Params
-        let dest_file = File::create(dest_path).unwrap();
+        let dest_file = File::create(dest_path)?;
 
-        Context {
+        let client = reqwest::Client::new();
+        let response = client.head(source_url).send()?;
+
+        let length = response
+            .headers()
+            .get(CONTENT_LENGTH)
+            .ok_or("Response doesn't include Content-Length")?;
+        let length = usize::from_str(length.to_str()?).map_err(|_| "invalid Content-Length header")?;
+
+        Ok(Context {
             source_url: source_url,
+            dest_path: dest_path,
             dest_file: dest_file,
             public_key: public_key,
             expected_sig: expected_sig,
-            params: params,
+            hash_context: Blake2b::new(32),
+            client: client,
             completed_bytes: 0 as usize,
-            hash: None,
-            buffer: Vec::new(),
-        }
+            content_length: length,
+            chunksize: chunksize,
+        })
     }
 
-    // TODO don't do the whole thing at once
-    // TODO use proper error type
-    pub fn step(&mut self) -> Option<Progress> {
-        // Download file
-        let mut resp = reqwest::get(self.source_url).unwrap();
-        resp.read_to_end(&mut self.buffer).unwrap();
-    
-        // Hash data
-        let mut context = Blake2b::new(32);
-        context.update(&self.buffer);
-        let hash = context.finalize();
-        let mut bytes = Vec::new();
-        bytes.extend_from_slice(hash.as_bytes());
-        self.hash = Some(bytes);
-    
-        Some(Progress { completed_bytes: 0, total_bytes: None })
+    /// Download next chunk and update hash
+    pub fn step(&mut self) -> Result<Progress, Box<Error>> {
+        // Download chunk
+        let data = self.client
+            .get(self.source_url)
+            .header(RANGE, format!("{}-{}", self.completed_bytes, self.completed_bytes + self.chunksize))
+            .send()?
+            .text()?;
+       
+        // Hash chunk
+        self.hash_context.update(&data.as_bytes());
+
+        // Write chunk to disk
+        self.dest_file.write(&data.as_bytes())?;
+        
+        // Update context
+        self.completed_bytes += data.len();
+
+        Ok(Progress { completed_bytes: self.completed_bytes, total_bytes: self.content_length })
     }
 
-    // Consume context, verify hash and return VerifiedFile if possible
-    // TODO write to temp file as you go based on Params
-    // TODO what happens if you call finish on a context that's not done?
+    /// Consume context, verify hash, and return `VerifiedFile` handle
     pub fn finish(mut self) -> Option<VerifiedFile> {
+        let hash = self.hash_context.finalize();
+
         // Verify signature
-        if verify_detached(&self.expected_sig, &self.hash.unwrap(), &self.public_key) {
-            // Write file once data is verified
+        if verify_detached(&self.expected_sig, hash.as_bytes(), &self.public_key) {
+            // Seek to the start of the file before returning the handle
             self.dest_file.seek(SeekFrom::Start(0)).unwrap();
-            let bytes_written = self.dest_file.write(&self.buffer).unwrap();
-    
             Some(self.dest_file)
         } else {
+            // Close and delete the invalid file
+            drop(self.dest_file);
+            fs::remove_file(self.dest_path).unwrap();
             None
         }
-
     }
 }
 
+/// Generate a keypair
 pub fn gen_keypair() -> (String, String) {
     sodiumoxide::init().unwrap();
     let (pk, sk) = ed25519::gen_keypair();
@@ -130,6 +117,7 @@ pub fn gen_keypair() -> (String, String) {
      format!("DYS1{}", base64::encode_config(&sk[..], URL_SAFE_NO_PAD)))
 }
 
+/// Sign a file with a secret key
 pub fn sign(file_path: &str, secret_key: &str) -> String {
     let secret_key = decode_secret_key(secret_key).unwrap();
     let mut file = File::open(file_path).unwrap();
@@ -148,6 +136,7 @@ pub fn sign(file_path: &str, secret_key: &str) -> String {
     format!("DYG1{}", base64::encode_config(&signature[..], URL_SAFE_NO_PAD))
 }
 
+/// Open file and verify before returning a file handle
 pub fn verify_open(file_path: &str, expected_sig: &str, public_key: &str) -> Option<VerifiedFile> {
     let public_key = decode_public_key(public_key).unwrap();
     let expected_sig = decode_signature(expected_sig).unwrap();
@@ -163,30 +152,48 @@ pub fn verify_open(file_path: &str, expected_sig: &str, public_key: &str) -> Opt
     let hash = context.finalize();
     let hash = hash.as_bytes();
 
-    file.seek(SeekFrom::Start(0)).unwrap();
-
     // Verify signature
     if verify_detached(&expected_sig, hash, &public_key) {
+        file.seek(SeekFrom::Start(0)).unwrap();
         Some(file as VerifiedFile)
     } else {
         None
     }
 }
 
-// TODO this should probably have more descriptive error handling
+/// Download file to buffer and verify before writing to destination
 pub fn verify_get(source_url: &str, dest_path: &str, expected_sig: &str, public_key: &str) -> Option<VerifiedFile> {
-    let mut context = Context::new(source_url, dest_path, public_key, expected_sig, Params::new());
-    context.step().unwrap();
-    context.finish()
+    let public_key = decode_public_key(public_key).unwrap();
+    let expected_sig = decode_signature(expected_sig).unwrap();
+
+    // Download file
+    let mut buffer = Vec::new();
+    let mut resp = reqwest::get(source_url).unwrap();
+    resp.read_to_end(&mut buffer).unwrap();
+    
+    // Hash file
+    let mut context = Blake2b::new(32);
+    context.update(&buffer);
+    let hash = context.finalize();
+
+    // Verify hash
+    if verify_detached(&expected_sig, &hash.as_bytes(), &public_key) {
+        // Write file once data is verified
+        let mut dest_file = File::create(dest_path).unwrap();
+        dest_file.seek(SeekFrom::Start(0)).unwrap();
+    
+        Some(dest_file)
+    } else {
+        None
+    }
 }
 
-// TODO proper error type would mean ? operator and probably cleaner code, error types are useful anyway
 fn decode_public_key(public_key: &str) -> Option<ed25519::PublicKey> {
     match &public_key[0..4] {
         "DYP1" => ed25519::PublicKey::from_slice(
                 match base64::decode_config(&public_key[4..], URL_SAFE_NO_PAD) {
                     Ok(x) => x,
-                    Err(x) => return None,
+                    Err(_) => return None,
                 }.as_slice(),
             ),
         _ => None,
@@ -198,7 +205,7 @@ fn decode_secret_key(secret_key: &str) -> Option<ed25519::SecretKey> {
         "DYS1" => ed25519::SecretKey::from_slice(
                 match base64::decode_config(&secret_key[4..], URL_SAFE_NO_PAD) {
                     Ok(x) => x,
-                    Err(x) => return None,
+                    Err(_) => return None,
                 }.as_slice(),
             ),
         _ => None,
@@ -210,7 +217,7 @@ fn decode_signature(signature: &str) -> Option<ed25519::Signature> {
         "DYG1" => ed25519::Signature::from_slice(
                 match base64::decode_config(&signature[4..], URL_SAFE_NO_PAD) {
                     Ok(x) => x,
-                    Err(x) => return None,
+                    Err(_) => return None,
                 }.as_slice(),
             ),
         _ => None,
