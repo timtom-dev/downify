@@ -1,6 +1,6 @@
 [package]
 name = "downify"
-version = "0.1.0"
+version = "0.2.0"
 authors = ["TimTom <timtom.business@gmail.com>"]
 edition = "2018"
 description = "Downify is a small Rust library for downloading, signing, and verifying files."
@@ -13,3 +13,10 @@ categories = ["cryptography"]
 license = "MIT"
 
 [dependencies]
+reqwest = "0.9"
+sodiumoxide = "0.2"
+blake2-rfc = "0.2"
+base64 = "0.9"
+# TODO - dependencies for binary, waiting on https://github.com/rust-lang/cargo/issues/1982
+structopt = "0.2"
+url = "1.7"
