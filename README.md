@@ -3,7 +3,7 @@
 [![crates.io](https://img.shields.io/crates/v/downify.svg)](https://crates.io/crates/downify)
 [![docs](https://docs.rs/downify/badge.svg)](https://docs.rs/downify)
 
-Downify is a small Rust library for downloading, signing, and verifying files.
+Downify is a small Rust library for downloading, signing, and verifying files. It's intended to be used as part of an application's update mechanism.
 
 The library uses reqwest to download a file from a URL and hashes it with blake2-rfc. Sodiumoxide is then used to verify the file's signed hash before returning a `VerifiedFile` handle.
 
