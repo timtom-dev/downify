@@ -32,6 +32,7 @@ pub struct Context<'a> {
     completed_bytes: usize,
     content_length: usize,
     chunksize: usize,
+    buffer: Vec<u8>,
 }
 
 impl<'a> Context<'a> {
@@ -66,26 +67,29 @@ impl<'a> Context<'a> {
             completed_bytes: 0 as usize,
             content_length: length,
             chunksize: chunksize,
+            buffer: vec![],
         })
     }
 
     /// Download next chunk and update hash
     pub fn step(&mut self) -> Result<Progress, Box<Error>> {
         // Download chunk
-        let data = self.client
+        let mut response = self.client
             .get(self.source_url)
-            .header(RANGE, format!("{}-{}", self.completed_bytes, self.completed_bytes + self.chunksize))
-            .send()?
-            .text()?;
-       
+            .header(RANGE, format!("bytes={}-{}", self.completed_bytes, self.completed_bytes + self.chunksize - 1))
+            .send()?;
+
+        self.buffer.clear();
+        response.copy_to(&mut self.buffer)?;
+
         // Hash chunk
-        self.hash_context.update(&data.as_bytes());
+        self.hash_context.update(&self.buffer);
 
         // Write chunk to disk
-        self.dest_file.write(&data.as_bytes())?;
+        let bytes_written = self.dest_file.write(&self.buffer)?;
         
         // Update context
-        self.completed_bytes += data.len();
+        self.completed_bytes += bytes_written;
 
         Ok(Progress { completed_bytes: self.completed_bytes, total_bytes: self.content_length })
     }

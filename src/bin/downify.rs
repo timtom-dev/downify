@@ -2,6 +2,8 @@ extern crate downify;
 extern crate structopt;
 
 use std::fs;
+use std::io::Write;
+use std::io::stdout;
 use url::Url;
 use structopt::StructOpt;
 
@@ -106,9 +108,11 @@ fn main() {
         let parsed_url = Url::parse(&url_clone).expect("Invalid URL");
         let dest = parsed_url.path_segments().unwrap().last().unwrap();
 
-        let mut context = downify::Context::new(&url_clone, &dest, &signature, &public_key, 8*1024).unwrap();
+        let mut context = downify::Context::new(&url_clone, &dest, &signature, &public_key, 1024*1024).unwrap();
         loop {
             let progress = context.step().unwrap();
+            print!("\r{:?} / {:?} bytes", progress.completed_bytes, progress.total_bytes);
+            stdout().flush().ok().expect("Could not flush stdout");
             if progress.completed_bytes >= progress.total_bytes {
                 break;
             }
@@ -116,9 +120,9 @@ fn main() {
         let verified = context.finish();
 
         if verified.is_some() {
-            println!("Verification Success");
+            println!("\nVerification Success");
         } else {
-            println!("Verification Failed");
+            println!("\nVerification Failed");
         }
     }
 }
