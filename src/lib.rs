@@ -28,7 +28,7 @@ pub struct Context<'a> {
     public_key: ed25519::PublicKey,
     expected_sig: ed25519::Signature,
     hash_context: Blake2b,
-    client: reqwest::Client,
+    client: reqwest::blocking::Client,
     completed_bytes: usize,
     content_length: usize,
     chunksize: usize,
@@ -42,13 +42,13 @@ impl<'a> Context<'a> {
         expected_sig: &'a str,
         public_key: &'a str,
         chunksize: usize,
-    ) -> Result<Self, Box<Error>> {
+    ) -> Result<Self, Box<dyn Error>> {
         let public_key = decode_public_key(public_key).unwrap();
         let expected_sig = decode_signature(expected_sig).unwrap();
 
         let dest_file = File::create(dest_path)?;
 
-        let client = reqwest::Client::new();
+        let client = reqwest::blocking::Client::new();
         let response = client.head(source_url).send()?;
 
         let length = response
@@ -59,22 +59,22 @@ impl<'a> Context<'a> {
             usize::from_str(length.to_str()?).map_err(|_| "invalid Content-Length header")?;
 
         Ok(Context {
-            source_url: source_url,
-            dest_path: dest_path,
-            dest_file: dest_file,
-            public_key: public_key,
-            expected_sig: expected_sig,
+            source_url,
+            dest_path,
+            dest_file,
+            public_key,
+            expected_sig,
             hash_context: Blake2b::new(32),
-            client: client,
+            client,
             completed_bytes: 0 as usize,
             content_length: length,
-            chunksize: chunksize,
+            chunksize,
             buffer: vec![],
         })
     }
 
     /// Download next chunk and update hash
-    pub fn step(&mut self) -> Result<Progress, Box<Error>> {
+    pub fn step(&mut self) -> Result<Progress, Box<dyn Error>> {
         // Download chunk
         let mut response = self
             .client
@@ -195,7 +195,7 @@ pub fn verify_get(
 
     // Download file
     let mut buffer = Vec::new();
-    let mut resp = reqwest::get(source_url).unwrap();
+    let mut resp = reqwest::blocking::get(source_url).unwrap();
     resp.read_to_end(&mut buffer).unwrap();
 
     // Hash file
