@@ -42,7 +42,7 @@ impl<'a> Context<'a> {
         expected_sig: &'a str,
         public_key: &'a str,
         chunksize: usize,
-    ) -> Result<Self, Box<Error>> {
+    ) -> Result<Self, Box<dyn Error>> {
         let public_key = decode_public_key(public_key).unwrap();
         let expected_sig = decode_signature(expected_sig).unwrap();
 
@@ -59,22 +59,22 @@ impl<'a> Context<'a> {
             usize::from_str(length.to_str()?).map_err(|_| "invalid Content-Length header")?;
 
         Ok(Context {
-            source_url: source_url,
-            dest_path: dest_path,
-            dest_file: dest_file,
-            public_key: public_key,
-            expected_sig: expected_sig,
+            source_url,
+            dest_path,
+            dest_file,
+            public_key,
+            expected_sig,
             hash_context: Blake2b::new(32),
-            client: client,
+            client,
             completed_bytes: 0 as usize,
             content_length: length,
-            chunksize: chunksize,
+            chunksize,
             buffer: vec![],
         })
     }
 
     /// Download next chunk and update hash
-    pub fn step(&mut self) -> Result<Progress, Box<Error>> {
+    pub fn step(&mut self) -> Result<Progress, Box<dyn Error>> {
         // Download chunk
         let mut response = self
             .client
