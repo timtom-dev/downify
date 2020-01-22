@@ -28,7 +28,7 @@ pub struct Context<'a> {
     public_key: ed25519::PublicKey,
     expected_sig: ed25519::Signature,
     hash_context: Blake2b,
-    client: reqwest::Client,
+    client: reqwest::blocking::Client,
     completed_bytes: usize,
     content_length: usize,
     chunksize: usize,
@@ -48,7 +48,7 @@ impl<'a> Context<'a> {
 
         let dest_file = File::create(dest_path)?;
 
-        let client = reqwest::Client::new();
+        let client = reqwest::blocking::Client::new();
         let response = client.head(source_url).send()?;
 
         let length = response
@@ -195,7 +195,7 @@ pub fn verify_get(
 
     // Download file
     let mut buffer = Vec::new();
-    let mut resp = reqwest::get(source_url).unwrap();
+    let mut resp = reqwest::blocking::get(source_url).unwrap();
     resp.read_to_end(&mut buffer).unwrap();
 
     // Hash file
